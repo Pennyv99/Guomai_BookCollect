@@ -6,6 +6,56 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 import pandas as pd
+import pyodbc
+from pyasn1_modules.rfc6482 import IPAddress
+
+def add_to_database(isbns, names, contents, category):
+    # 连接 SQL Server
+    server = '172.16.10.75'
+    database = 'db_openbooks'
+    account = 'sa'
+    password = 'gm123456'
+
+    # 创建连接字符串
+    conn_str = f"DRIVER={{ODBC Driver 18 for SQL Server}};SERVER={server};DATABASE={database};UID={account};PWD={password};TrustServerCertificate=yes;"
+    # 连接数据库
+    conn = pyodbc.connect(conn_str)
+    cursor = conn.cursor()
+
+    # 创建表（如果不存在）
+    cursor.execute('''
+    IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='openbooks' AND xtype='U')
+    CREATE TABLE openbooks (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        isbn NVARCHAR(50),
+        book_name NVARCHAR(255),
+        book_intro NVARCHAR(MAX),
+        category NVARCHAR(255)
+    )
+    ''')
+    conn.commit()
+
+    # 删除重复的行
+    for isbn in isbns:
+        cursor.execute('''
+        DELETE FROM openbooks
+        WHERE isbn = ?
+        ''', (isbn,))
+
+    # 插入数据
+    for isbn, name, content in zip(isbns, names, contents):
+        cursor.execute('''
+        INSERT INTO openbooks (isbn, book_name, book_intro, category)
+        VALUES (?, ?, ?, ?)
+        ''', (isbn, name, content, category))
+
+    # 提交事务
+    conn.commit()
+
+    # 关闭连接
+    cursor.close()
+    conn.close()
+    print("数据已成功插入到数据库。")
 
 def fetch_isbns(username, password, label,retail, monthly, rising):
     # 设置Selenium WebDriver
@@ -29,7 +79,7 @@ def fetch_isbns(username, password, label,retail, monthly, rising):
         # 提交登录表单
         login_button = driver.find_element(By.XPATH, '//button[@type="submit"]')
         login_button.click()
-
+        # input()
         # 等待登录后的页面加载
         WebDriverWait(driver, 10).until(EC.url_contains('/dashboard'))
 
@@ -38,7 +88,6 @@ def fetch_isbns(username, password, label,retail, monthly, rising):
 
         # 等待搜索页面加载
         WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, '//button[span[text()="社科"]]')))
-
         # 点击社科按钮
         social_science_button = driver.find_element(By.XPATH, f'//button[span[text()="{label}"]]')
         social_science_button.click()
@@ -61,7 +110,7 @@ def fetch_isbns(username, password, label,retail, monthly, rising):
         search_button.click()
 
         # 等待查询按钮的特定属性变化为"false"
-        WebDriverWait(driver, 100).until(
+        WebDriverWait(driver, 10000).until(
             lambda d: d.find_element(By.XPATH, '//button[span[text()="查询"]]')\
                 .get_attribute("ant-click-animating-without-extra-node") == "false"
         )
@@ -133,16 +182,19 @@ label = '社科'
 retail = '零售'
 monthly = '月'
 rising = '飙升榜'
+category = f'{label}_{retail}_{monthly}_{rising}'
 
 isbns, names ,contents= fetch_isbns(username, password, label,retail, monthly, rising)
-# 保存到CSV文件
-label_retail_monthly_rising = f'{label}_{retail}_{monthly}_{rising}'
-data = {
-    'ISBN': isbns,
-    'Name': names,
-    'Content': contents
-}
-df = pd.DataFrame(data)
-df.to_csv(f'{label_retail_monthly_rising}.csv', index=False, encoding='utf-8-sig')  # 以 UTF-8 编码保存 CSV 文件
-
-print("数据已成功保存为 CSV 文件。")
+# 将数据添加到数据库
+add_to_database(isbns, names, contents, category)
+# # 保存到CSV文件
+# label_retail_monthly_rising = f'{label}_{retail}_{monthly}_{rising}'
+# data = {
+#     'ISBN': isbns,
+#     'Name': names,
+#     'Content': contents
+# }
+# df = pd.DataFrame(data)
+# df.to_csv(f'{label_retail_monthly_rising}.csv', index=False, encoding='utf-8-sig')  # 以 UTF-8 编码保存 CSV 文件
+#
+# print("数据已成功保存为 CSV 文件。")
